@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading.Tasks;
 using FuzzySharp;
 using Soundex;
+using System.Threading.Tasks;
 
 namespace DataProcessorLibrary1
 {
@@ -16,7 +17,7 @@ namespace DataProcessorLibrary1
     {
         private string _filePath;
         private DateTime _lastModified;
-        private List<List<(int ID, string Name)>> _dataChunks;
+        private List<List<(string ID, string Name, string soundexcode)>> _dataChunks;
         private int _chunkSize = 100000; // Adjust chunk size as needed
         DateTime now = DateTime.Now; // Gets the current local date and time.
 
@@ -24,7 +25,7 @@ namespace DataProcessorLibrary1
         {
             _filePath = filePath;
             _chunkSize = chunkSize;
-            _dataChunks = new List<List<(int ID, string Name)>>();
+            _dataChunks = new List<List<(string ID, string Name, string soundexcode)>>();
         }
 
         public void LoadDataIfChanged()
@@ -45,6 +46,7 @@ namespace DataProcessorLibrary1
         private void LoadData()
         {
             Stopwatch dataloadtimer = Stopwatch.StartNew();
+            Console.WriteLine("File Loaded to chunks: " + _dataChunks.Count);
             _dataChunks.Clear();
             try
             {
@@ -52,22 +54,23 @@ namespace DataProcessorLibrary1
                 {
                     reader.ReadLine(); // Skip header
                     string line;
-                    var currentChunk = new List<(int ID, string Name)>();
+                    var currentChunk = new List<(string ID, string Name, string soundexcode)>();
                     int count = 0;
                     while ((line = reader.ReadLine()) != null)
                     {
                         var parts = line.Split(',');
-                        if (parts.Length == 2 && int.TryParse(parts[0], out int id))
+                        if (parts.Length == 2)//&& int.TryParse(parts[0], out string ID)
                         {
-                            currentChunk.Add((id, parts[1]));
+                            currentChunk.Add((parts[0], parts[1], SoundexAlgorithm.GetSoundex(parts[1])));
                             count++;
                             if (count % _chunkSize == 0)
                             {
                                 _dataChunks.Add(currentChunk);
-                                currentChunk = new List<(int ID, string Name)>();
+                                currentChunk = new List<(string ID, string Name, string soundexcode)>();
                             }
                         }
                     }
+                    Console.WriteLine("Total Line Count " + count);
                     if (currentChunk.Count > 0)
                     {
                         _dataChunks.Add(currentChunk);
@@ -83,16 +86,23 @@ namespace DataProcessorLibrary1
             }
         }
 
-        public List<(int ID, string Name, int Score)> Search(string searchName)
+        public List<(string ID, string Name, int Score)> Search(string searchName)
         {
+
+            ParallelOptions parallelOptions = new ParallelOptions();
+            // Set the maximum degree of parallelism. Use -1 for unlimited.
+            // You can set it to a specific number, e.g., Environment.ProcessorCount, or a custom value.
+            parallelOptions.MaxDegreeOfParallelism = 100;
             Stopwatch stopwatch = Stopwatch.StartNew();
-            List<(int ID, string Name, int Score)> results = new List<(int ID, string Name, int Score)>();
-            Parallel.ForEach(_dataChunks, chunk =>
+            var soundexscore = SoundexAlgorithm.GetSoundex(searchName);
+            List<(string ID, string Name, int Score)> results = new List<(string ID, string Name, int Score)>();
+            Parallel.ForEach(_dataChunks, parallelOptions, chunk =>
             {
                 foreach (var item in chunk)
                 {
                     int fuzzyScore = Fuzz.PartialRatio(item.Name, searchName);
-                    int soundexScore = SoundexAlgorithm.GetSoundex(item.Name) == SoundexAlgorithm.GetSoundex(searchName) ? 100 : 0;
+                    //int soundexScore = SoundexAlgorithm.GetSoundex(item.Name) == soundexscore ? 100 : 0;
+                    int soundexScore = item.soundexcode == soundexscore ? 100 : 0;
                     int compositeScore = (fuzzyScore + soundexScore) / 2;
                     if (compositeScore > 80)
                     {
